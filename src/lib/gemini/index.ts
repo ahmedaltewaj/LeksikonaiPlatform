@@ -1,0 +1,1 @@
+export { generateDanishResponse } from './client'
