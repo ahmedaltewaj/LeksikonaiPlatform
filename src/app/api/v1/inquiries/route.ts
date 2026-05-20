@@ -22,6 +22,19 @@ const ResponseSchema = z.object({
 })
 
 export async function GET(req: NextRequest) {
+  const authHeader = req.headers.get('authorization')
+  if (!authHeader) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const supabase = getServerClient()
+  const token = authHeader.replace('Bearer ', '')
+  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+
+  if (authError || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const { searchParams } = new URL(req.url)
   const userId = searchParams.get('userId')
   const status = searchParams.get('status')
@@ -29,8 +42,6 @@ export async function GET(req: NextRequest) {
   if (!userId) {
     return NextResponse.json({ error: 'userId required' }, { status: 400 })
   }
-
-  const supabase = getServerClient()
 
   let query = supabase
     .from('inquiries')
