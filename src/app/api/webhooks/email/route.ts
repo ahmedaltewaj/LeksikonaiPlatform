@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyWebhookSignature } from '@/lib/email/webhook'
-import { getServerClient } from '@/lib/supabase/client'
+import { createSupabaseServerClient } from '@/lib/supabase/server'
 
 interface EmailPayload {
   from?: { name?: string; email?: string } | string
@@ -50,13 +50,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing body content' }, { status: 400 })
   }
 
-  const supabase = getServerClient()
+  const supabase = await createSupabaseServerClient()
+
+  const senderEmail = extractSenderEmail(payload)
+
+  // Look up user by sender email to associate inquiry with their account
+  const { data: senderUser } = await supabase
+    .from('users')
+    .select('id')
+    .eq('email', senderEmail)
+    .single()
+
+  if (!senderUser) {
+    console.error('No user found for sender email:', senderEmail)
+    return NextResponse.json({ error: 'No user found for sender email' }, { status: 400 })
+  }
 
   const { data: inquiry, error: inquiryError } = await supabase
     .from('inquiries')
     .insert({
+      user_id: senderUser.id,
       source: 'email',
-      sender_email: extractSenderEmail(payload),
+      sender_email: senderEmail,
       sender_name: extractSenderName(payload),
       subject: payload.subject || null,
       body_text: bodyText.slice(0, 10000),
@@ -73,9 +88,10 @@ export async function POST(req: NextRequest) {
   }
 
   await supabase.from('analytics_events').insert({
+    user_id: senderUser.id,
     event_type: 'inquiry_received',
     inquiry_id: inquiry.id,
-    metadata: { source: 'email', sender_email: extractSenderEmail(payload) },
+    metadata: { source: 'email', sender_email: senderEmail },
   })
 
   return NextResponse.json({ status: 'received', inquiryId: inquiry.id }, { status: 200 })

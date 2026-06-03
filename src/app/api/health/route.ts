@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getServerClient } from '@/lib/supabase/client'
+import { createSupabaseServerClient } from '@/lib/supabase/server'
 
 type DependencyStatus = 'ok' | 'error'
 type HealthCheckStatus = 'healthy' | 'degraded' | 'unhealthy'
@@ -21,7 +21,7 @@ export async function GET() {
   let supabaseStatus: DependencyStatus = 'ok'
 
   try {
-    const supabase = getServerClient()
+    const supabase = await createSupabaseServerClient()
     const { error } = await supabase.from('users').select('id').limit(1)
 
     if (error && error.code !== 'PGRST116') {

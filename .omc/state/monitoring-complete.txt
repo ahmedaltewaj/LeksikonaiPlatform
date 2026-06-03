@@ -1,0 +1,1 @@
+Issue LEKAA-182 completed at 2026-05-15T13:11:00+00:00. Docs created: docs/monitoring.md, docs/oncall.md, docs/alert-rules.md. API unavailable - mark done when recovered.

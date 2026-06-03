@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { getServerClient } from '@/lib/supabase/client'
+import { createClient } from '@/lib/supabase/client'
 import { generateDanishResponse } from '@/lib/gemini/client'
 
 vi.mock('@/lib/supabase/client', () => ({
-  getServerClient: vi.fn(),
+  createClient: vi.fn(),
 }))
 
 vi.mock('@/lib/gemini/client', () => ({
@@ -23,7 +23,7 @@ describe('GET /api/v1/inquiries', () => {
       eq: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
     }
-    ;(getServerClient as any).mockReturnValue(mockSupabase)
+    ;(createClient as any).mockReturnValue(mockSupabase)
   })
 
   it('returns 401 when no authorization header', async () => {
@@ -128,7 +128,7 @@ describe('POST /api/v1/inquiries - Response Generation', () => {
       select: vi.fn().mockReturnThis(),
       single: vi.fn(),
     }
-    ;(getServerClient as any).mockReturnValue(mockSupabase)
+    ;(createClient as any).mockReturnValue(mockSupabase)
     ;(generateDanishResponse as any).mockResolvedValue('Mocked AI response in Danish')
   })
 
@@ -216,7 +216,7 @@ describe('PATCH /api/v1/inquiries - Response Approval Workflow', () => {
       update: vi.fn().mockReturnThis(),
       single: vi.fn(),
     }
-    ;(getServerClient as any).mockReturnValue(mockSupabase)
+    ;(createClient as any).mockReturnValue(mockSupabase)
   })
 
   it('approves response and updates status', async () => {
@@ -295,7 +295,7 @@ describe('GET /api/v1/responses', () => {
       eq: vi.fn().mockReturnThis(),
       single: vi.fn(),
     }
-    ;(getServerClient as any).mockReturnValue(mockSupabase)
+    ;(createClient as any).mockReturnValue(mockSupabase)
   })
 
   it('returns 401 when no authorization header', () => {

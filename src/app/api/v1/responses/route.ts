@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { getServerClient } from '@/lib/supabase/client'
+import { createSupabaseServerClient } from '@/lib/supabase/server'
 
 const RequestSchema = z.object({
   inquiryId: z.string().uuid(),
@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const supabase = getServerClient()
+  const supabase = await createSupabaseServerClient()
   const token = authHeader.replace('Bearer ', '')
   const { data: { user }, error: authError } = await supabase.auth.getUser(token)
 

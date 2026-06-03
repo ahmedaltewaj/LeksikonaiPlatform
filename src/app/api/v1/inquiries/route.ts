@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { getServerClient } from '@/lib/supabase/client'
+import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { generateDanishResponse } from '@/lib/gemini/client'
 
 const RequestSchema = z.object({
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const supabase = getServerClient()
+  const supabase = await createSupabaseServerClient()
   const token = authHeader.replace('Bearer ', '')
   const { data: { user }, error: authError } = await supabase.auth.getUser(token)
 
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues }, { status: 400 })
   }
 
-  const supabase = getServerClient()
+  const supabase = await createSupabaseServerClient()
   const { userId, source, senderEmail, senderName, subject, bodyText, rawContent, webhookMessageId } = parsed.data
 
   const { data: inquiry, error: inquiryError } = await supabase
@@ -93,10 +93,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: inquiryError.message }, { status: 500 })
   }
 
-  const aiResponse = await generateDanishResponse(
-    { senderName: senderName || 'Customer', body: bodyText },
-    userId
-  )
+  let aiResponse: string
+  try {
+    aiResponse = await generateDanishResponse(
+      { senderName: senderName || 'Customer', body: bodyText },
+      userId,
+      'professional'
+    )
+  } catch (aiError) {
+    console.error('AI generation failed:', aiError)
+    aiResponse = 'Tak for din henvendelse. Vi har modtaget din besked og vil svare dig hurtigst muligt.'
+  }
 
   const { data: response, error: responseError } = await supabase
     .from('responses')
@@ -126,6 +133,16 @@ export async function POST(req: NextRequest) {
     metadata: { response_id: response.id },
   })
 
+  await supabase.from('analytics_events').insert({
+    user_id: userId,
+    event_type: 'response_quality_logged',
+    inquiry_id: inquiry.id,
+    metadata: {
+      response_length: aiResponse.length,
+      tone: 'professional',
+    },
+  })
+
   return NextResponse.json({ data: { inquiry, response } }, { status: 201 })
 }
 
@@ -137,7 +154,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues }, { status: 400 })
   }
 
-  const supabase = getServerClient()
+  const supabase = await createSupabaseServerClient()
   const { inquiryId, action, approvedText } = parsed.data
 
   const { data: inquiry } = await supabase
