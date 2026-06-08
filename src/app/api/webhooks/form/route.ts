@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyWebhookSignature } from '@/lib/email/webhook'
+import { createInquiryWithResponse } from '@/lib/inquiry/service'
 import { z } from 'zod'
 
 const FormWebhookSchema = z.object({
@@ -26,7 +27,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
   }
 
-  console.log('Form webhook received:', payload)
+  try {
+    const result = await createInquiryWithResponse({
+      source: 'web_form',
+      senderEmail: payload.email,
+      senderName: payload.name || null,
+      subject: payload.company ? 'Inquiry from ' + payload.company : null,
+      bodyText: payload.message || '',
+      rawContent: payload as unknown as Record<string, unknown>,
+    })
 
-  return NextResponse.json({ status: 'received' }, { status: 200 })
+    if (result.duplicate) {
+      return NextResponse.json({
+        status: 'duplicate',
+        inquiryId: result.duplicateInquiryId,
+      }, { status: 200 })
+    }
+
+    return NextResponse.json({
+      status: 'received',
+      inquiryId: result.inquiryId,
+      isNewUser: result.isNewUser,
+      hasAiResponse: !!result.aiResponseText,
+    }, { status: 200 })
+  } catch (error) {
+    console.error('Form webhook error:', error)
+    return NextResponse.json({ error: 'Failed to process form submission' }, { status: 500 })
+  }
 }
