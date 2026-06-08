@@ -2,8 +2,8 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { generateDanishResponse, ResponseTone } from '@/lib/gemini/client'
 
 export interface InquiryInput {
-  /** UUID of the SME owner (required) */
-  userId: string
+  /** UUID of the SME owner (optional - will be looked up by senderEmail if not provided) */
+  userId?: string
   source: 'email' | 'web_form' | 'webhook'
   senderEmail: string
   senderName?: string | null
@@ -24,6 +24,28 @@ export interface CreateInquiryResult {
 }
 
 /**
+ * Result of createInquiryWithResponse - returns inquiry and response objects
+ */
+export interface InquiryResponseTuple {
+  inquiry: {
+    id: string
+    user_id: string | null
+    source: string
+    sender_email: string
+    sender_name: string | null
+    subject: string | null
+    body_text: string
+    status: string
+    created_at: string
+  }
+  response: {
+    id: string
+    ai_generated_text: string
+    status: string
+  } | null
+}
+
+/**
  * Error thrown when inquiry ingestion fails
  */
 export class InquiryIngestionError extends Error {
@@ -41,13 +63,13 @@ export class InquiryIngestionError extends Error {
  * Unified inquiry ingestion service.
  * Handles all channels (email, form, API) consistently.
  * 
- * - Looks up user by email OR creates inquiry with null user_id (anonymous)
+ * - Uses provided userId or looks up by senderEmail
  * - Checks for duplicate message-ID
  * - Generates AI response
  * - Creates response record
  * - Logs analytics
  * 
- * @param input - Normalized inquiry data from any source
+ * @param input - Normalized inquiry data from any source (userId is optional - looked up by email if not provided)
  * @param tone - Tone for AI-generated response (default: 'professional')
  * @returns Created inquiry result with AI response
  */
@@ -78,11 +100,11 @@ export async function createInquiryWithResponse(
     }
   }
 
-  // Look up user by sender email
-  let userId: string | null = null
+  // Resolve userId - use provided or look up by sender email
+  let userId: string | null = input.userId ?? null
   let isNewUser = false
 
-  if (input.senderEmail && input.senderEmail !== 'unknown@example.com') {
+  if (!userId && input.senderEmail && input.senderEmail !== 'unknown@example.com') {
     const { data: existingUser } = await supabase
       .from('users')
       .select('id')
@@ -92,7 +114,6 @@ export async function createInquiryWithResponse(
     if (existingUser) {
       userId = existingUser.id
     } else {
-      // Anonymous sender - will be handled as new customer
       isNewUser = true
     }
   }
@@ -104,11 +125,11 @@ export async function createInquiryWithResponse(
       user_id: userId,
       source: input.source,
       sender_email: input.senderEmail,
-      sender_name: input.senderName,
-      subject: input.subject,
+      sender_name: input.senderName ?? null,
+      subject: input.subject ?? null,
       body_text: input.bodyText.slice(0, 10000),
-      raw_content: input.rawContent,
-      webhook_message_id: input.webhookMessageId,
+      raw_content: input.rawContent ?? null,
+      webhook_message_id: input.webhookMessageId ?? null,
       status: 'pending',
     })
     .select()
@@ -123,11 +144,10 @@ export async function createInquiryWithResponse(
   }
 
   // Generate AI response
-  let aiResponseText: string | null = null
-  let responseId: string | null = null
+  let responseRecord: { id: string; ai_generated_text: string; status: string } | null = null
 
   try {
-    aiResponseText = await generateDanishResponse(
+    const aiResponseText = await generateDanishResponse(
       { senderName: input.senderName || 'Customer', body: input.bodyText },
       userId || 'anonymous',
       tone
@@ -145,37 +165,40 @@ export async function createInquiryWithResponse(
       .select()
       .single()
 
-    responseId = response?.id || null
+    if (response) {
+      responseRecord = {
+        id: response.id,
+        ai_generated_text: response.ai_generated_text,
+        status: response.status,
+      }
+    }
   } catch (aiError) {
     console.error('AI response generation failed:', aiError)
     // Continue without AI response - inquiry is still created
-    aiResponseText = null
   }
 
   // Log analytics
-  if (userId) {
-    await supabase.from('analytics_events').insert([
-      {
-        user_id: userId,
-        event_type: 'inquiry_received',
-        inquiry_id: inquiry.id,
-        metadata: { source: input.source, sender_email: input.senderEmail },
-      },
-      {
-        user_id: userId,
-        event_type: 'response_generated',
-        inquiry_id: inquiry.id,
-        metadata: responseId ? { response_id: responseId } : undefined,
-      },
-    ])
-  }
+  await supabase.from('analytics_events').insert([
+    {
+      user_id: userId,
+      event_type: 'inquiry_received',
+      inquiry_id: inquiry.id,
+      metadata: { source: input.source, sender_email: input.senderEmail },
+    },
+    {
+      user_id: userId,
+      event_type: 'response_generated',
+      inquiry_id: inquiry.id,
+      metadata: responseRecord ? { response_id: responseRecord.id } : undefined,
+    },
+  ])
 
   return {
     inquiryId: inquiry.id,
-    userId,
+    userId: inquiry.user_id,
     isNewUser,
-    aiResponseText,
-    responseId,
+    aiResponseText: responseRecord?.ai_generated_text ?? null,
+    responseId: responseRecord?.id ?? null,
     duplicate: false,
   }
 }
@@ -331,11 +354,11 @@ export async function ingestInquiry(
       user_id: userId,
       source: input.source,
       sender_email: input.senderEmail,
-      sender_name: input.senderName,
-      subject: input.subject,
+      sender_name: input.senderName ?? null,
+      subject: input.subject ?? null,
       body_text: input.bodyText.slice(0, 10000),
-      raw_content: input.rawContent,
-      webhook_message_id: input.webhookMessageId,
+      raw_content: input.rawContent ?? null,
+      webhook_message_id: input.webhookMessageId ?? null,
       status: 'pending',
     })
     .select()
