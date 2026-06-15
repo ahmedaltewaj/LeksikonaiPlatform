@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 const FeedbackSchema = z.object({
   rating: z.number().int().min(1).max(10),
@@ -11,6 +11,9 @@ const FeedbackSchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
+  const auth = await authenticateRequest(req)
+  if ('error' in auth) return auth.error
+
   const body = await req.json()
   const parsed = FeedbackSchema.safeParse(body)
 
@@ -18,26 +21,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid input', details: parsed.error.issues }, { status: 400 })
   }
 
-  const authHeader = req.headers.get('authorization')
-  if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const supabase = await createSupabaseServerClient()
-  const token = authHeader.replace('Bearer ', '')
-
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
   const { rating, category, comment_text, nps_score, page_url } = parsed.data
 
-  const { data: feedback, error: feedbackError } = await supabase
+  const { data: feedback, error: feedbackError } = await auth.supabase
     .from('feedback')
     .insert({
-      user_id: user.id,
+      user_id: auth.user.id,
       rating,
       category,
       comment_text,
@@ -52,8 +41,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: feedbackError.message }, { status: 500 })
   }
 
-  await supabase.from('analytics_events').insert({
-    user_id: user.id,
+  await auth.supabase.from('analytics_events').insert({
+    user_id: auth.user.id,
     event_type: 'feedback_submitted',
     metadata: { feedback_id: feedback.id, category, rating },
   })

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { generateDanishResponse } from '@/lib/gemini/client'
+import { authenticateRequest } from '@/lib/supabase/auth'
+import { ingestInquiry } from '@/lib/inquiry/service'
 
 const RequestSchema = z.object({
   userId: z.string().uuid(),
@@ -22,18 +22,8 @@ const ResponseSchema = z.object({
 })
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const supabase = await createSupabaseServerClient()
-  const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = await authenticateRequest(req)
+  if ('error' in auth) return auth.error
 
   const { searchParams } = new URL(req.url)
   const userId = searchParams.get('userId')
@@ -43,7 +33,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'userId required' }, { status: 400 })
   }
 
-  let query = supabase
+  if (userId !== auth.user.id) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  let query = auth.supabase
     .from('inquiries')
     .select('*')
     .eq('user_id', userId)
@@ -63,6 +57,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await authenticateRequest(req)
+  if ('error' in auth) return auth.error
+
   const body = await req.json()
   const parsed = RequestSchema.safeParse(body)
 
@@ -70,83 +67,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues }, { status: 400 })
   }
 
-  const supabase = await createSupabaseServerClient()
   const { userId, source, senderEmail, senderName, subject, bodyText, rawContent, webhookMessageId } = parsed.data
 
-  const { data: inquiry, error: inquiryError } = await supabase
-    .from('inquiries')
-    .insert({
-      user_id: userId,
-      source: source || 'web_form',
-      sender_email: senderEmail || 'unknown@example.com',
-      sender_name: senderName,
-      subject,
-      body_text: bodyText,
-      raw_content: rawContent,
-      webhook_message_id: webhookMessageId,
-      status: 'pending',
-    })
-    .select()
-    .single()
-
-  if (inquiryError) {
-    return NextResponse.json({ error: inquiryError.message }, { status: 500 })
+  if (userId !== auth.user.id) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  let aiResponse: string
   try {
-    aiResponse = await generateDanishResponse(
-      { senderName: senderName || 'Customer', body: bodyText },
-      userId,
-      'professional'
+    const result = await ingestInquiry(
+      {
+        source: source || 'web_form',
+        userId,
+        senderEmail: senderEmail || 'unknown@example.com',
+        senderName: senderName || null,
+        subject: subject || null,
+        bodyText,
+        rawContent: rawContent || null,
+        webhookMessageId: webhookMessageId || null,
+      },
+      { autoGenerateResponse: true, tone: 'professional', skipUserLookup: true }
     )
-  } catch (aiError) {
-    console.error('AI generation failed:', aiError)
-    aiResponse = 'Tak for din henvendelse. Vi har modtaget din besked og vil svare dig hurtigst muligt.'
+
+    return NextResponse.json({
+      data: {
+        inquiry: result.inquiry,
+        response: result.response,
+      },
+    }, { status: 201 })
+  } catch (error) {
+    console.error('Failed to create inquiry:', error)
+    return NextResponse.json({ error: 'Failed to create inquiry' }, { status: 500 })
   }
-
-  const { data: response, error: responseError } = await supabase
-    .from('responses')
-    .insert({
-      inquiry_id: inquiry.id,
-      user_id: userId,
-      ai_generated_text: aiResponse,
-      status: 'draft',
-    })
-    .select()
-    .single()
-
-  if (responseError) {
-    return NextResponse.json({ error: responseError.message }, { status: 500 })
-  }
-
-  await supabase.from('analytics_events').insert({
-    user_id: userId,
-    event_type: 'inquiry_received',
-    inquiry_id: inquiry.id,
-  })
-
-  await supabase.from('analytics_events').insert({
-    user_id: userId,
-    event_type: 'response_generated',
-    inquiry_id: inquiry.id,
-    metadata: { response_id: response.id },
-  })
-
-  await supabase.from('analytics_events').insert({
-    user_id: userId,
-    event_type: 'response_quality_logged',
-    inquiry_id: inquiry.id,
-    metadata: {
-      response_length: aiResponse.length,
-      tone: 'professional',
-    },
-  })
-
-  return NextResponse.json({ data: { inquiry, response } }, { status: 201 })
 }
 
 export async function PATCH(req: NextRequest) {
+  const auth = await authenticateRequest(req)
+  if ('error' in auth) return auth.error
+
   const body = await req.json()
   const parsed = ResponseSchema.safeParse(body)
 
@@ -154,10 +111,9 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues }, { status: 400 })
   }
 
-  const supabase = await createSupabaseServerClient()
   const { inquiryId, action, approvedText } = parsed.data
 
-  const { data: inquiry } = await supabase
+  const { data: inquiry } = await auth.supabase
     .from('inquiries')
     .select('user_id')
     .eq('id', inquiryId)
@@ -169,39 +125,43 @@ export async function PATCH(req: NextRequest) {
 
   const userId = inquiry.user_id
 
+  if (userId !== auth.user.id) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   if (action === 'approve' || action === 'edit') {
     const newStatus = action === 'approve' ? 'approved' : 'edited'
     const textToUse = approvedText || ''
 
-    await supabase
+    await auth.supabase
       .from('responses')
       .update({ status: newStatus, approved_text: textToUse })
       .eq('inquiry_id', inquiryId)
       .eq('user_id', userId)
 
-    await supabase
+    await auth.supabase
       .from('inquiries')
       .update({ status: 'reviewed' })
       .eq('id', inquiryId)
 
-    await supabase.from('analytics_events').insert({
+    await auth.supabase.from('analytics_events').insert({
       user_id: userId,
       event_type: action === 'approve' ? 'response_approved' : 'response_edited',
       inquiry_id: inquiryId,
     })
   } else if (action === 'send') {
-    await supabase
+    await auth.supabase
       .from('responses')
       .update({ status: 'sent', sent_at: new Date().toISOString() })
       .eq('inquiry_id', inquiryId)
       .eq('user_id', userId)
 
-    await supabase
+    await auth.supabase
       .from('inquiries')
       .update({ status: 'sent' })
       .eq('id', inquiryId)
 
-    await supabase.from('analytics_events').insert({
+    await auth.supabase.from('analytics_events').insert({
       user_id: userId,
       event_type: 'response_sent',
       inquiry_id: inquiryId,

@@ -1,25 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
 import dns from 'dns'
 import { promisify } from 'util'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 const resolveTxt = promisify(dns.resolveTxt)
 
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('Authorization')
-    const token = authHeader?.replace('Bearer ', '')
-
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const supabase = await createSupabaseServerClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const auth = await authenticateRequest(request)
+    if ('error' in auth) return auth.error
 
     const body = await request.json()
     const { email_address } = body
@@ -82,7 +71,7 @@ export async function POST(request: NextRequest) {
       console.log('DMARC check failed:', dmarcError)
     }
 
-    const { error: updateError } = await supabase
+    const { error: updateError } = await auth.supabase
       .from('email_configurations')
       .update({
         spf_verified: spfVerified,
@@ -91,17 +80,17 @@ export async function POST(request: NextRequest) {
         dkim_checked_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       })
-      .eq('user_id', user.id)
+      .eq('user_id', auth.user.id)
 
     if (updateError) {
       console.error('Error updating DNS check results:', updateError)
     }
 
     if (spfVerified && dkimVerified) {
-      await supabase
+      await auth.supabase
         .from('email_configurations')
         .update({ status: 'verified' })
-        .eq('user_id', user.id)
+        .eq('user_id', auth.user.id)
     }
 
     return NextResponse.json({

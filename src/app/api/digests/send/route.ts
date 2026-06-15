@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authorizeAdmin } from '@/lib/supabase/auth'
 import { getFeedbackForPeriod, computeDigestStats, buildDigestData, getWeekBoundary, type DigestData } from '@/lib/digest'
 import { renderWeeklyDigest, sendEmail } from '@/lib/email'
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await authorizeAdmin(request)
+    if ('error' in auth) return auth.error
+
     const body = await request.json().catch(() => ({}))
     const source = body.source || 'manual'
 
-    const supabase = await createSupabaseServerClient()
     const { start, end } = getWeekBoundary()
     const periodStart = body.periodStart ? new Date(body.periodStart) : start
     const periodEnd = body.periodEnd ? new Date(body.periodEnd) : end
@@ -17,7 +20,7 @@ export async function POST(request: NextRequest) {
     const stats = await computeDigestStats(periodStart, periodEnd)
     const digestData: DigestData = buildDigestData(periodStart, periodEnd, feedbacks, stats)
 
-    const { data: recipients, error: recipientError } = await supabase
+    const { data: recipients, error: recipientError } = await auth.supabase
       .from('digest_recipients')
       .select('id, email, name, role')
       .eq('active', true)
@@ -48,7 +51,7 @@ export async function POST(request: NextRequest) {
           html: digestHtml
         })
 
-        const { data: logEntry, error: logError } = await supabase
+        const { data: logEntry, error: logError } = await auth.supabase
           .from('digest_logs')
           .insert({
             period_start: periodStart.toISOString(),
@@ -68,7 +71,7 @@ export async function POST(request: NextRequest) {
         sentCount++
       } catch (err) {
         console.error(`Failed to send digest to ${recipient.email}:`, err)
-        await supabase.from('digest_logs').insert({
+        await auth.supabase.from('digest_logs').insert({
           period_start: periodStart.toISOString(),
           period_end: periodEnd.toISOString(),
           total_inquiries: feedbacks.length,

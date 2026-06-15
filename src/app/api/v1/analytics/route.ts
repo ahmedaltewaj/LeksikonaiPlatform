@@ -1,19 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const supabase = await createSupabaseServerClient()
-  const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = await authenticateRequest(req)
+  if ('error' in auth) return auth.error
 
   const { searchParams } = new URL(req.url)
   const userId = searchParams.get('userId')
@@ -23,7 +13,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'userId required' }, { status: 400 })
   }
 
-  // Calculate date range
+  if (userId !== auth.user.id) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   const now = new Date()
   let startDate: Date
   switch (period) {
@@ -40,7 +33,7 @@ export async function GET(req: NextRequest) {
       startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
   }
 
-  const { data: inquiries, error: inquiriesError } = await supabase
+  const { data: inquiries, error: inquiriesError } = await auth.supabase
     .from('inquiries')
     .select('*')
     .eq('user_id', userId)
@@ -52,7 +45,7 @@ export async function GET(req: NextRequest) {
 
   const inquiryIds = inquiries?.map(i => i.id) || []
 
-  const { data: responses, error: responsesError } = await supabase
+  const { data: responses, error: responsesError } = await auth.supabase
     .from('responses')
     .select('*')
     .in('inquiry_id', inquiryIds)
@@ -62,12 +55,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: responsesError.message }, { status: 500 })
   }
 
-  // Calculate metrics
   const totalInquiries = inquiries?.length || 0
   const sentResponses = responses?.filter(r => r.status === 'sent').length || 0
   const approvalRate = totalInquiries > 0 ? Math.round((sentResponses / totalInquiries) * 100) : 0
 
-  // Avg response time (seconds between inquiry received and response sent)
   const responseTimes = responses
     ?.filter(r => r.sent_at && r.status === 'sent')
     .map(r => {
@@ -75,7 +66,7 @@ export async function GET(req: NextRequest) {
       if (!inquiry || !r.sent_at) return null
       const received = new Date(inquiry.received_at).getTime()
       const sent = new Date(r.sent_at).getTime()
-      return Math.round((sent - received) / (1000 * 60)) // minutes
+      return Math.round((sent - received) / (1000 * 60))
     })
     .filter((t): t is number => t !== null)
 
@@ -83,7 +74,6 @@ export async function GET(req: NextRequest) {
     ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
     : 0
 
-  // Daily breakdown for chart
   const dailyCounts: Record<string, { date: string; inquiries: number; sent: number }> = {}
   inquiries?.forEach(inquiry => {
     const date = new Date(inquiry.received_at).toISOString().split('T')[0]
@@ -98,14 +88,14 @@ export async function GET(req: NextRequest) {
 
   const dailyData = Object.values(dailyCounts)
     .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(-14) // last 14 days
+    .slice(-14)
 
   return NextResponse.json({
     data: {
       totalInquiries,
       sentResponses,
       approvalRate,
-      avgResponseTime, // minutes
+      avgResponseTime,
       dailyData,
     }
   })

@@ -1,8 +1,12 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(request)
+    if ('error' in auth) return auth.error
+
     const body = await request.json()
     const { companyName, industry, companySize, primaryLanguage, name, role, email } = body
 
@@ -13,7 +17,6 @@ export async function POST(request: Request) {
       )
     }
 
-    const supabase = await createSupabaseServerClient()
     const profileData = {
       company_name: companyName,
       industry,
@@ -24,64 +27,23 @@ export async function POST(request: Request) {
       onboarding_started_at: new Date().toISOString()
     }
 
-    let userId: string | null = null
+    await auth.supabase
+      .from('users')
+      .update({
+        name,
+        company_name: companyName,
+        metadata: profileData
+      })
+      .eq('id', auth.user.id)
 
-    const authHeader = request.headers.get('Authorization')
-    if (authHeader?.startsWith('Bearer ')) {
-      const { data: { user }, error: authError } = await supabase.auth.getUser(
-        authHeader.replace('Bearer ', '')
-      )
-      if (user && !authError) {
-        userId = user.id
-      }
-    }
-
-    if (userId) {
-      await supabase
-        .from('users')
-        .update({
-          name,
-          company_name: companyName,
-          metadata: profileData
-        })
-        .eq('id', userId)
-
-      try {
-        await supabase.rpc('record_activation_event', {
-          p_user_id: userId,
-          p_event_type: 'onboarding_started',
-          p_metadata: { companyName, industry, companySize }
-        })
-      } catch (e) {
-        // best effort
-      }
-    } else if (email) {
-      const { data: existingUser } = await supabase
-        .from('users')
-        .select('id')
-        .eq('email', email)
-        .single()
-
-      if (existingUser) {
-        await supabase
-          .from('users')
-          .update({
-            name,
-            company_name: companyName,
-            metadata: profileData
-          })
-          .eq('id', existingUser.id)
-
-        try {
-          await supabase.rpc('record_activation_event', {
-            p_user_id: existingUser.id,
-            p_event_type: 'onboarding_started',
-            p_metadata: { companyName, industry, companySize }
-          })
-        } catch (e) {
-          // best effort
-        }
-      }
+    try {
+      await auth.supabase.rpc('record_activation_event', {
+        p_user_id: auth.user.id,
+        p_event_type: 'onboarding_started',
+        p_metadata: { companyName, industry, companySize }
+      })
+    } catch (e) {
+      // best effort
     }
 
     return NextResponse.json({ success: true })

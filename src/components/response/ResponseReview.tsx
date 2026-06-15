@@ -61,23 +61,19 @@ export function ResponseReview({ inquiry, userId, onResponseSent }: ResponseRevi
       const supabase = createClient()
       const { data: { session } } = await supabase.auth.getSession()
 
-      const res = await fetch('/api/v1/inquiries', {
+      const res = await fetch(`/api/v1/inquiries/${inquiry.id}/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session?.access_token || ''}`,
         },
-        body: JSON.stringify({
-          userId,
-          source: inquiry.source,
-          senderEmail: inquiry.sender_email,
-          senderName: inquiry.sender_name,
-          subject: inquiry.subject,
-          bodyText: inquiry.body_text,
-        }),
+        body: JSON.stringify({ userId }),
       })
 
-      if (!res.ok) throw new Error('Failed to generate response')
+      if (!res.ok) {
+        const json = await res.json()
+        throw new Error(json.error || 'Failed to generate response')
+      }
 
       const json = await res.json()
       setResponse(json.data?.response || null)
@@ -90,7 +86,7 @@ export function ResponseReview({ inquiry, userId, onResponseSent }: ResponseRevi
   }
 
   async function handleApprove() {
-    if (!response) return
+    if (!response || !userId) return
 
     setIsLoading(true)
     setError(null)
@@ -100,22 +96,82 @@ export function ResponseReview({ inquiry, userId, onResponseSent }: ResponseRevi
       const supabase = createClient()
       const { data: { session } } = await supabase.auth.getSession()
 
-      const res = await fetch('/api/v1/inquiries', {
-        method: 'PATCH',
+      const res = await fetch('/api/v1/review/approve', {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session?.access_token || ''}`,
         },
         body: JSON.stringify({
           inquiryId: inquiry.id,
-          action: 'approve',
+          userId,
           approvedText: editedText,
         }),
       })
 
-      if (!res.ok) throw new Error('Failed to approve response')
+      if (!res.ok) {
+        const json = await res.json()
+        throw new Error(json.error || 'Failed to approve response')
+      }
 
-      setResponse(prev => prev ? { ...prev, status: 'approved', approved_text: editedText } : null)
+      const newStatus = editedText !== response.ai_generated_text ? 'edited' : 'approved'
+      setResponse(prev => prev ? { ...prev, status: newStatus, approved_text: editedText } : null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  async function handleApproveAndSend() {
+    if (!response || !userId) return
+
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const createClient = (await import('@/lib/supabase/client')).createClient
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+
+      const approveRes = await fetch('/api/v1/review/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token || ''}`,
+        },
+        body: JSON.stringify({
+          inquiryId: inquiry.id,
+          userId,
+          approvedText: editedText,
+        }),
+      })
+
+      if (!approveRes.ok) {
+        const json = await approveRes.json()
+        throw new Error(json.error || 'Failed to approve response')
+      }
+
+      const sendRes = await fetch('/api/v1/review/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token || ''}`,
+        },
+        body: JSON.stringify({
+          inquiryId: inquiry.id,
+          userId,
+        }),
+      })
+
+      if (!sendRes.ok) {
+        const json = await sendRes.json()
+        throw new Error(json.error || 'Failed to send response')
+      }
+
+      setResponse(prev => prev ? { ...prev, status: 'sent', approved_text: editedText } : null)
+      localStorage.setItem('feedback_shown', 'true')
+      onResponseSent?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
@@ -124,7 +180,7 @@ export function ResponseReview({ inquiry, userId, onResponseSent }: ResponseRevi
   }
 
   async function handleSend() {
-    if (!response) return
+    if (!response || !userId) return
 
     setIsLoading(true)
     setError(null)
@@ -134,19 +190,22 @@ export function ResponseReview({ inquiry, userId, onResponseSent }: ResponseRevi
       const supabase = createClient()
       const { data: { session } } = await supabase.auth.getSession()
 
-      const res = await fetch('/api/v1/inquiries', {
-        method: 'PATCH',
+      const res = await fetch('/api/v1/review/send', {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session?.access_token || ''}`,
         },
         body: JSON.stringify({
           inquiryId: inquiry.id,
-          action: 'send',
+          userId,
         }),
       })
 
-      if (!res.ok) throw new Error('Failed to send response')
+      if (!res.ok) {
+        const json = await res.json()
+        throw new Error(json.error || 'Failed to send response')
+      }
 
       setResponse(prev => prev ? { ...prev, status: 'sent' } : null)
       localStorage.setItem('feedback_shown', 'true')
@@ -193,7 +252,7 @@ export function ResponseReview({ inquiry, userId, onResponseSent }: ResponseRevi
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-lg font-medium text-gray-900">AI Response</h3>
           {response && (
-            <Badge variant={response.status === 'sent' ? 'approved' : response.status === 'draft' ? 'pending' : 'draft'}>
+            <Badge variant={response.status === 'sent' ? 'sent' : response.status === 'draft' ? 'pending' : response.status === 'edited' ? 'edited' : 'approved'}>
               {response.status}
             </Badge>
           )}
@@ -226,11 +285,11 @@ export function ResponseReview({ inquiry, userId, onResponseSent }: ResponseRevi
       {response && response.status !== 'sent' && (
         <div className="flex gap-3">
           <Button
-            onClick={handleApprove}
+            onClick={handleApproveAndSend}
             isLoading={isLoading}
-            disabled={response.status === 'approved' || response.status === 'edited'}
+            className="bg-success hover:bg-emerald-600"
           >
-            Approve
+            Approve & Send
           </Button>
           <Button
             variant="secondary"
@@ -239,6 +298,14 @@ export function ResponseReview({ inquiry, userId, onResponseSent }: ResponseRevi
             disabled={response.status !== 'approved' && response.status !== 'edited'}
           >
             Send Response
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={handleApprove}
+            isLoading={isLoading}
+            disabled={response.status === 'approved' || response.status === 'edited'}
+          >
+            Approve Only
           </Button>
         </div>
       )}

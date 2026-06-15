@@ -12,6 +12,8 @@ interface InquiryListProps {
   error: string | null
   onSelectInquiry: (inquiry: Inquiry) => void
   selectedInquiryId?: string
+  userId: string
+  onGenerateResponse: (inquiry: Inquiry) => Promise<void>
 }
 
 export function InquiryList({
@@ -20,7 +22,12 @@ export function InquiryList({
   error,
   onSelectInquiry,
   selectedInquiryId,
+  userId,
+  onGenerateResponse,
 }: InquiryListProps) {
+  const [generatingId, setGeneratingId] = useState<string | null>(null)
+  const [generateError, setGenerateError] = useState<string | null>(null)
+
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -68,6 +75,19 @@ export function InquiryList({
     )
   }
 
+  async function handleGenerateResponse(e: React.MouseEvent, inquiry: Inquiry) {
+    e.stopPropagation()
+    setGeneratingId(inquiry.id)
+    setGenerateError(null)
+    try {
+      await onGenerateResponse(inquiry)
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : 'Failed to generate response')
+    } finally {
+      setGeneratingId(null)
+    }
+  }
+
   return (
     <div className="space-y-3">
       {inquiries.map(inquiry => (
@@ -94,6 +114,22 @@ export function InquiryList({
               {formatDate(inquiry.received_at)}
             </div>
           </div>
+
+          {inquiry.status === 'pending' && (
+            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-3">
+              {generateError && (
+                <span className="text-sm text-red-600">{generateError}</span>
+              )}
+              <Button
+                size="sm"
+                variant="secondary"
+                isLoading={generatingId === inquiry.id}
+                onClick={e => handleGenerateResponse(e, inquiry)}
+              >
+                Generate Response
+              </Button>
+            </div>
+          )}
         </Card>
       ))}
     </div>

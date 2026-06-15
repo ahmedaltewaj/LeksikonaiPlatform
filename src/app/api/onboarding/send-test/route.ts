@@ -1,27 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { sendEmail } from '@/lib/email'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('Authorization')
-    const token = authHeader?.replace('Bearer ', '')
+    const auth = await authenticateRequest(request)
+    if ('error' in auth) return auth.error
 
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const supabase = await createSupabaseServerClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: emailConfig, error: configError } = await supabase
+    const { data: emailConfig, error: configError } = await auth.supabase
       .from('email_configurations')
       .select('email_address, is_verified')
-      .eq('user_id', user.id)
+      .eq('user_id', auth.user.id)
       .single()
 
     if (configError || !emailConfig) {

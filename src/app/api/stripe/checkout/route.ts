@@ -1,25 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { stripe } from '@/lib/stripe'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authorizeAdmin } from '@/lib/supabase/auth'
 
 const CheckoutSchema = z.object({
   price_id: z.string().min(1, 'price_id is required'),
 })
 
 export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const supabase = await createSupabaseServerClient()
-  const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = await authorizeAdmin(req)
+  if ('error' in auth) return auth.error
 
   const body = await req.json()
   const parsed = CheckoutSchema.safeParse(body)
@@ -34,10 +24,10 @@ export async function POST(req: NextRequest) {
   const { price_id } = parsed.data
 
   try {
-    const { data: customerData } = await supabase
+    const { data: customerData } = await auth.supabase
       .from('subscriptions')
       .select('stripe_customer_id')
-      .eq('user_id', user.id)
+      .eq('user_id', auth.user.id)
       .maybeSingle()
 
     let customerId: string
@@ -46,7 +36,7 @@ export async function POST(req: NextRequest) {
       customerId = customerData.stripe_customer_id
     } else {
       const customers = await stripe.customers.list({
-        email: user.email ?? undefined,
+        email: auth.user.email ?? undefined,
         limit: 1,
       })
 
@@ -54,9 +44,9 @@ export async function POST(req: NextRequest) {
         customerId = customers.data[0].id
       } else {
         const newCustomer = await stripe.customers.create({
-          email: user.email ?? undefined,
+          email: auth.user.email ?? undefined,
           metadata: {
-            user_id: user.id,
+            user_id: auth.user.id,
           },
         })
         customerId = newCustomer.id
@@ -79,11 +69,11 @@ export async function POST(req: NextRequest) {
       success_url: `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${baseUrl}/billing/cancel`,
       metadata: {
-        user_id: user.id,
+        user_id: auth.user.id,
       },
       subscription_data: {
         metadata: {
-          user_id: user.id,
+          user_id: auth.user.id,
         },
       },
     })

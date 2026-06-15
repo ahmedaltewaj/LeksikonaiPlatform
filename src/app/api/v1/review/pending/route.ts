@@ -1,19 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const supabase = await createSupabaseServerClient()
-  const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = await authenticateRequest(req)
+  if ('error' in auth) return auth.error
 
   const { searchParams } = new URL(req.url)
   const userId = searchParams.get('userId')
@@ -22,7 +12,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'userId required' }, { status: 400 })
   }
 
-  const { data: inquiries, error: inquiriesError } = await supabase
+  if (userId !== auth.user.id) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  const { data: inquiries, error: inquiriesError } = await auth.supabase
     .from('inquiries')
     .select('*')
     .eq('user_id', userId)
@@ -39,7 +33,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ data: [] })
   }
 
-  const { data: responses, error: responsesError } = await supabase
+  const { data: responses, error: responsesError } = await auth.supabase
     .from('responses')
     .select('*')
     .in('inquiry_id', inquiryIds)

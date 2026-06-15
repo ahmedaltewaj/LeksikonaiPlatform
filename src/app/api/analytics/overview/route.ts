@@ -1,30 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authorizeAdmin } from '@/lib/supabase/auth'
 
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const supabase = await createSupabaseServerClient()
-    const token = authHeader.replace('Bearer ', '')
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: userRecord } = await supabase
-      .from('users')
-      .select('metadata')
-      .eq('id', user.id)
-      .single()
-
-    if (userRecord?.metadata?.role !== 'admin') {
-      return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 })
-    }
+    const auth = await authorizeAdmin(request)
+    if ('error' in auth) return auth.error
 
     const now = new Date()
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
@@ -32,7 +12,7 @@ export async function GET(request: NextRequest) {
     const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
 
     const getCount = (table: string, filters: Record<string, unknown> = {}) => {
-      return supabase.from(table).select('*', { count: 'exact', head: true }).then(r => r.count || 0)
+      return auth.supabase.from(table).select('*', { count: 'exact', head: true }).then(r => r.count || 0)
     }
 
     const [totalSignups, emailVerified, onboardingStarted, onboardingCompleted, firstResponseSent, activated] = await Promise.all([
@@ -58,9 +38,9 @@ export async function GET(request: NextRequest) {
       const weekStart = new Date(now.getTime() - (i + 1) * 7 * 24 * 60 * 60 * 1000)
       const weekEnd = new Date(now.getTime() - i * 7 * 24 * 60 * 60 * 1000)
       
-      const total = await supabase.from('users').select('*', { count: 'exact', head: true })
+      const total = await auth.supabase.from('users').select('*', { count: 'exact', head: true })
         .gte('created_at', weekStart.toISOString()).lt('created_at', weekEnd.toISOString()).then(r => r.count || 0)
-      const activatedCount = await supabase.from('users').select('*', { count: 'exact', head: true })
+      const activatedCount = await auth.supabase.from('users').select('*', { count: 'exact', head: true })
         .eq('is_activated', true).gte('activation_completed_at', weekStart.toISOString())
         .lt('activation_completed_at', weekEnd.toISOString()).then(r => r.count || 0)
 
@@ -73,7 +53,7 @@ export async function GET(request: NextRequest) {
       getCount('analytics_events', { gte: { created_at: thirtyDaysAgo.toISOString() } })
     ])
 
-    const { data: timeToResponse } = await supabase.from('users')
+    const { data: timeToResponse } = await auth.supabase.from('users')
       .select('first_inquiry_received_at, first_response_sent_at')
       .not('first_inquiry_received_at', 'is', null).not('first_response_sent_at', 'is', null)
 
@@ -97,7 +77,7 @@ export async function GET(request: NextRequest) {
       const weekStart = new Date(now.getTime() - (i + 1) * 7 * 24 * 60 * 60 * 1000)
       const weekEnd = new Date(now.getTime() - i * 7 * 24 * 60 * 60 * 1000)
 
-      const { data: npsData } = await supabase.from('feedback').select('nps_score')
+      const { data: npsData } = await auth.supabase.from('feedback').select('nps_score')
         .not('nps_score', 'is', null).gte('created_at', weekStart.toISOString()).lt('created_at', weekEnd.toISOString())
 
       if (npsData && npsData.length > 0) {
@@ -110,7 +90,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const { data: allNps } = await supabase.from('feedback').select('nps_score').not('nps_score', 'is', null)
+    const { data: allNps } = await auth.supabase.from('feedback').select('nps_score').not('nps_score', 'is', null)
     let overallNps: { nps: number | null; promoters: number; passives: number; detractors: number; total: number } | null = null
     if (allNps && allNps.length > 0) {
       const promoters = allNps.filter(f => (f.nps_score || 0) >= 9).length

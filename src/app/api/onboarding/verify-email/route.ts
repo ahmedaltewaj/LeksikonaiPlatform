@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { sendEmail } from '@/lib/email'
 import { z } from 'zod'
 import { randomBytes } from 'crypto'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 const verifyEmailSchema = z.object({
   email_address: z.string().email()
@@ -10,19 +11,8 @@ const verifyEmailSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('Authorization')
-    const token = authHeader?.replace('Bearer ', '')
-
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const supabase = await createSupabaseServerClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const auth = await authenticateRequest(request)
+    if ('error' in auth) return auth.error
 
     const body = await request.json()
     const parsed = verifyEmailSchema.safeParse(body)
@@ -38,24 +28,24 @@ export async function POST(request: NextRequest) {
 
     const verification_token = randomBytes(32).toString('hex')
 
-    const { data: existingConfig } = await supabase
+    const { data: existingConfig } = await auth.supabase
       .from('email_configurations')
       .select('id')
-      .eq('user_id', user.id)
+      .eq('user_id', auth.user.id)
       .single()
 
     if (!existingConfig) {
       return NextResponse.json({ error: 'Email configuration not found. Please save email config first.' }, { status: 400 })
     }
 
-    const { error: updateError } = await supabase
+    const { error: updateError } = await auth.supabase
       .from('email_configurations')
       .update({
         verification_token,
         verification_sent_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       })
-      .eq('user_id', user.id)
+      .eq('user_id', auth.user.id)
 
     if (updateError) {
       console.error('Error updating verification token:', updateError)

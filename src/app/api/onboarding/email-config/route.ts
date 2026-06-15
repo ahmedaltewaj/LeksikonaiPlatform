@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 const emailConfigSchema = z.object({
   email_address: z.string().email(),
@@ -10,24 +11,13 @@ const emailConfigSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('Authorization')
-    const token = authHeader?.replace('Bearer ', '')
+    const auth = await authenticateRequest(request)
+    if ('error' in auth) return auth.error
 
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const supabase = await createSupabaseServerClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data, error } = await supabase
+    const { data, error } = await auth.supabase
       .from('email_configurations')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', auth.user.id)
       .single()
 
     if (error && error.code !== 'PGRST116') {
@@ -47,19 +37,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('Authorization')
-    const token = authHeader?.replace('Bearer ', '')
-
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const supabase = await createSupabaseServerClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const auth = await authenticateRequest(request)
+    if ('error' in auth) return auth.error
 
     const body = await request.json()
     const parsed = emailConfigSchema.safeParse(body)
@@ -73,14 +52,14 @@ export async function POST(request: NextRequest) {
 
     const { email_address, email_provider, webhook_url } = parsed.data
 
-    const { data: existing } = await supabase
+    const { data: existing } = await auth.supabase
       .from('email_configurations')
       .select('id')
-      .eq('user_id', user.id)
+      .eq('user_id', auth.user.id)
       .single()
 
     if (existing) {
-      const { error: updateError } = await supabase
+      const { error: updateError } = await auth.supabase
         .from('email_configurations')
         .update({
           email_address,
@@ -89,17 +68,17 @@ export async function POST(request: NextRequest) {
           status: 'pending',
           updated_at: new Date().toISOString()
         })
-        .eq('user_id', user.id)
+        .eq('user_id', auth.user.id)
 
       if (updateError) {
         console.error('Error updating email config:', updateError)
         return NextResponse.json({ error: 'Failed to update email configuration' }, { status: 500 })
       }
     } else {
-      const { error: insertError } = await supabase
+      const { error: insertError } = await auth.supabase
         .from('email_configurations')
         .insert({
-          user_id: user.id,
+          user_id: auth.user.id,
           email_address,
           email_provider,
           webhook_url,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 const ApproveSchema = z.object({
   inquiryId: z.string().uuid(),
@@ -9,6 +9,9 @@ const ApproveSchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
+  const auth = await authenticateRequest(req)
+  if ('error' in auth) return auth.error
+
   const body = await req.json()
   const parsed = ApproveSchema.safeParse(body)
 
@@ -18,9 +21,11 @@ export async function POST(req: NextRequest) {
 
   const { inquiryId, userId, approvedText } = parsed.data
 
-  const supabase = await createSupabaseServerClient()
+  if (userId !== auth.user.id) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
-  const { data: inquiry } = await supabase
+  const { data: inquiry } = await auth.supabase
     .from('inquiries')
     .select('id, user_id')
     .eq('id', inquiryId)
@@ -31,7 +36,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Inquiry not found' }, { status: 404 })
   }
 
-  const { data: response } = await supabase
+  const { data: response } = await auth.supabase
     .from('responses')
     .select('*')
     .eq('inquiry_id', inquiryId)
@@ -45,7 +50,7 @@ export async function POST(req: NextRequest) {
   const newStatus = approvedText && approvedText !== response.ai_generated_text ? 'edited' : 'approved'
   const textToUse = approvedText || response.ai_generated_text
 
-  const { error: updateError } = await supabase
+  const { error: updateError } = await auth.supabase
     .from('responses')
     .update({
       status: newStatus,
@@ -58,12 +63,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: updateError.message }, { status: 500 })
   }
 
-  await supabase
+  await auth.supabase
     .from('inquiries')
     .update({ status: 'reviewed' })
     .eq('id', inquiryId)
 
-  await supabase.from('analytics_events').insert({
+  await auth.supabase.from('analytics_events').insert({
     user_id: userId,
     event_type: newStatus === 'edited' ? 'response_edited' : 'response_approved',
     inquiry_id: inquiryId,

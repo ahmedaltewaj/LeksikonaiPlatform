@@ -2,10 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { NpsStats } from '@/components/ui/NpsStats'
 import { InquiryList } from '@/components/inquiry/InquiryList'
 import { ResponseReview } from '@/components/response/ResponseReview'
-import { AnalyticsDashboard } from '@/components/ui/AnalyticsDashboard'
 import { FeedbackWidget } from '@/components/ui/FeedbackWidget'
 import type { Inquiry } from '@/types'
 import { Button } from '@/components/ui/Button'
@@ -33,9 +31,55 @@ function DashboardClient() {
   const [emailConfig, setEmailConfig] = useState<EmailConfig | null>(null)
 
   useEffect(() => {
-    fetchUserAndInquiries()
-    fetchEmailConfigStatus()
+    checkOnboardingAndFetch()
   }, [])
+
+  async function checkOnboardingAndFetch() {
+    try {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session?.user) {
+        router.push('/login')
+        return
+      }
+
+      const statusRes = await fetch('/api/onboarding/status', {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`
+        }
+      })
+
+      if (statusRes.ok) {
+        const statusJson = await statusRes.json()
+        if (statusJson.success && !statusJson.data.isOnboardingCompleted) {
+          router.push('/onboarding')
+          return
+        }
+      }
+
+      setUserId(session.user.id)
+      setUserEmail(session.user.email ?? null)
+
+      const res = await fetch(
+        `/api/v1/inquiries?userId=${session.user.id}&status=${statusFilter === 'all' ? '' : statusFilter}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        }
+      )
+
+      if (!res.ok) throw new Error('Failed to fetch inquiries')
+
+      const json = await res.json()
+      setInquiries(json.data || [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   async function fetchEmailConfigStatus() {
     try {
@@ -61,39 +105,11 @@ function DashboardClient() {
     }
   }
 
-  async function fetchUserAndInquiries() {
-    try {
-      const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
-
-      if (!session?.user) {
-        setError('Please log in to view your dashboard')
-        setIsLoading(false)
-        return
-      }
-
-      setUserId(session.user.id)
-      setUserEmail(session.user.email ?? null)
-
-      const res = await fetch(
-        `/api/v1/inquiries?userId=${session.user.id}&status=${statusFilter === 'all' ? '' : statusFilter}`,
-        {
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        }
-      )
-
-      if (!res.ok) throw new Error('Failed to fetch inquiries')
-
-      const json = await res.json()
-      setInquiries(json.data || [])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
-    } finally {
-      setIsLoading(false)
+  useEffect(() => {
+    if (userId) {
+      fetchEmailConfigStatus()
     }
-  }
+  }, [userId])
 
   async function handleSignOut() {
     setIsSigningOut(true)
@@ -142,8 +158,31 @@ function DashboardClient() {
   }
 
   function handleResponseSent() {
-    fetchUserAndInquiries()
+    checkOnboardingAndFetch()
     setSelectedInquiry(null)
+  }
+
+  async function handleGenerateResponse(inquiry: Inquiry) {
+    const { createClient } = await import('@/lib/supabase/client')
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.user) return
+
+    const res = await fetch(`/api/v1/inquiries/${inquiry.id}/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ userId: session.user.id }),
+    })
+
+    if (!res.ok) {
+      const json = await res.json()
+      throw new Error(json.error || 'Failed to generate response')
+    }
+
+    await checkOnboardingAndFetch()
   }
 
   return (
@@ -183,9 +222,31 @@ function DashboardClient() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          <NpsStats />
-          <AnalyticsDashboard />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          <div className="bg-white rounded-lg shadow p-4">
+            <p className="text-sm text-gray-500 mb-1">Total Inquiries</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {inquiries.length}
+            </p>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <p className="text-sm text-gray-500 mb-1">Pending Reviews</p>
+            <p className="text-2xl font-bold text-amber-600">
+              {inquiries.filter(i => i.status === 'pending').length}
+            </p>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <p className="text-sm text-gray-500 mb-1">Sent This Week</p>
+            <p className="text-2xl font-bold text-green-600">
+              {inquiries.filter(i => {
+                if (i.status !== 'sent') return false
+                const sentDate = new Date(i.created_at)
+                const weekAgo = new Date()
+                weekAgo.setDate(weekAgo.getDate() - 7)
+                return sentDate >= weekAgo
+              }).length}
+            </p>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -213,6 +274,8 @@ function DashboardClient() {
                   error={error}
                   onSelectInquiry={handleSelectInquiry}
                   selectedInquiryId={selectedInquiry?.id}
+                  userId={userId!}
+                  onGenerateResponse={handleGenerateResponse}
                 />
               ) : (
                 <div className="text-center py-8 text-gray-500">

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { z } from 'zod'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 const preferencesSchema = z.object({
   email_welcome_enabled: z.boolean().optional().default(true),
@@ -15,21 +16,16 @@ const preferencesSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('Authorization')
-    const token = authHeader?.replace('Bearer ', '')
+    const auth = await authenticateRequest(request)
+    if ('error' in auth) return auth.error
 
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const { data: userRecord } = await auth.supabase
+      .from('users')
+      .select('metadata')
+      .eq('id', auth.user.id)
+      .single()
 
-    const supabase = await createSupabaseServerClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const metadata = (user.user_metadata || {}) as Record<string, boolean>
+    const metadata = (userRecord?.metadata || {}) as Record<string, boolean>
     const preferences = {
       email_welcome_enabled: metadata.email_welcome_enabled ?? true,
       email_setup_complete_enabled: metadata.email_setup_complete_enabled ?? true,
@@ -50,6 +46,9 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(request)
+    if ('error' in auth) return auth.error
+
     const body = await request.json()
     const parsed = preferencesSchema.safeParse(body)
 
@@ -60,26 +59,19 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    const authHeader = request.headers.get('Authorization')
-    const token = authHeader?.replace('Bearer ', '')
+    const { data: userRecord } = await auth.supabase
+      .from('users')
+      .select('metadata')
+      .eq('id', auth.user.id)
+      .single()
 
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const supabase = await createSupabaseServerClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const currentMetadata = (user.user_metadata || {}) as Record<string, unknown>
+    const currentMetadata = (userRecord?.metadata || {}) as Record<string, unknown>
     const updates = parsed.data
 
-    const { error: updateError } = await supabase.auth.updateUser({
-      data: { ...currentMetadata, ...updates }
-    })
+    const { error: updateError } = await auth.supabase
+      .from('users')
+      .update({ metadata: { ...currentMetadata, ...updates } })
+      .eq('id', auth.user.id)
 
     if (updateError) {
       throw updateError

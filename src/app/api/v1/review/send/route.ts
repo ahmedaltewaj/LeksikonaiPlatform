@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/auth'
 import { sendEmail } from '@/lib/email/client'
 
 const SendSchema = z.object({
@@ -9,6 +9,9 @@ const SendSchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
+  const auth = await authenticateRequest(req)
+  if ('error' in auth) return auth.error
+
   const body = await req.json()
   const parsed = SendSchema.safeParse(body)
 
@@ -18,9 +21,11 @@ export async function POST(req: NextRequest) {
 
   const { inquiryId, userId } = parsed.data
 
-  const supabase = await createSupabaseServerClient()
+  if (userId !== auth.user.id) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
-  const { data: inquiry } = await supabase
+  const { data: inquiry } = await auth.supabase
     .from('inquiries')
     .select('*, responses(*)')
     .eq('id', inquiryId)
@@ -49,7 +54,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to send email' }, { status: 500 })
   }
 
-  await supabase
+  await auth.supabase
     .from('responses')
     .update({
       status: 'sent',
@@ -58,12 +63,12 @@ export async function POST(req: NextRequest) {
     .eq('inquiry_id', inquiryId)
     .eq('user_id', userId)
 
-  await supabase
+  await auth.supabase
     .from('inquiries')
     .update({ status: 'sent' })
     .eq('id', inquiryId)
 
-  await supabase.from('analytics_events').insert({
+  await auth.supabase.from('analytics_events').insert({
     user_id: userId,
     event_type: 'response_sent',
     inquiry_id: inquiryId,

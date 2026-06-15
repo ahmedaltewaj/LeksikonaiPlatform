@@ -1,24 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 const RequestSchema = z.object({
   inquiryId: z.string().uuid(),
 })
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const supabase = await createSupabaseServerClient()
-  const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = await authenticateRequest(req)
+  if ('error' in auth) return auth.error
 
   const { searchParams } = new URL(req.url)
   const inquiryId = searchParams.get('inquiryId')
@@ -27,11 +17,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'inquiryId required' }, { status: 400 })
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await auth.supabase
     .from('responses')
     .select('*')
     .eq('inquiry_id', inquiryId)
-    .eq('user_id', user.id)
+    .eq('user_id', auth.user.id)
     .single()
 
   if (error) {

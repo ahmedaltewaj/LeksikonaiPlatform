@@ -1,27 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const supabase = await createSupabaseServerClient()
-    const token = authHeader.replace('Bearer ', '')
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const auth = await authenticateRequest(request)
+    if ('error' in auth) return auth.error
 
     const body = await request.json().catch(() => ({}))
     const surveyType = body.survey_type || 'manual'
     const periodDays = body.period_days || 30
 
-    const { data: canTrigger, error: checkError } = await supabase
-      .rpc('can_trigger_nps_survey', { p_user_id: user.id })
+    const { data: canTrigger, error: checkError } = await auth.supabase
+      .rpc('can_trigger_nps_survey', { p_user_id: auth.user.id })
 
     if (checkError) {
       console.error('Error checking NPS eligibility:', checkError)
@@ -35,10 +26,10 @@ export async function POST(request: NextRequest) {
       }, { status: 200 })
     }
 
-    const { data: trigger, error: insertError } = await supabase
+    const { data: trigger, error: insertError } = await auth.supabase
       .from('nps_survey_triggers')
       .insert({
-        user_id: user.id,
+        user_id: auth.user.id,
         survey_type: surveyType,
         status: 'pending',
         metadata: { period_days: periodDays }
@@ -64,23 +55,13 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    if (!authHeader) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const auth = await authenticateRequest(request)
+    if ('error' in auth) return auth.error
 
-    const supabase = await createSupabaseServerClient()
-    const token = authHeader.replace('Bearer ', '')
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: triggers, error: fetchError } = await supabase
+    const { data: triggers, error: fetchError } = await auth.supabase
       .from('nps_survey_triggers')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', auth.user.id)
       .order('triggered_at', { ascending: false })
       .limit(10)
 
@@ -89,7 +70,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: fetchError.message }, { status: 500 })
     }
 
-    const { data: npsScore } = await supabase.rpc('get_user_nps_score', { p_user_id: user.id })
+    const { data: npsScore } = await auth.supabase.rpc('get_user_nps_score', { p_user_id: auth.user.id })
 
     return NextResponse.json({ 
       triggers: triggers || [],

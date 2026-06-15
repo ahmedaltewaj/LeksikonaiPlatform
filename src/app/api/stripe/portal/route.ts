@@ -1,25 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { stripe } from '@/lib/stripe'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 const PortalSchema = z.object({
   customer_id: z.string().min(1, 'customer_id is required'),
 })
 
 export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const supabase = await createSupabaseServerClient()
-  const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = await authenticateRequest(req)
+  if ('error' in auth) return auth.error
 
   const body = await req.json()
   const parsed = PortalSchema.safeParse(body)
@@ -34,11 +24,11 @@ export async function POST(req: NextRequest) {
   const { customer_id } = parsed.data
 
   try {
-    const { data: subscription } = await supabase
+    const { data: subscription } = await auth.supabase
       .from('subscriptions')
       .select('stripe_customer_id')
       .eq('stripe_customer_id', customer_id)
-      .eq('user_id', user.id)
+      .eq('user_id', auth.user.id)
       .maybeSingle()
 
     if (!subscription) {

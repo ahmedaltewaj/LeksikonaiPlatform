@@ -1,29 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const authHeader = request.headers.get('authorization')
-  if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const supabase = await createSupabaseServerClient()
-  const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const auth = await authenticateRequest(request)
+  if ('error' in auth) return auth.error
 
   try {
     const subscriberId = params.id
 
-    const { data: subscriber, error: fetchError } = await supabase
+    const { data: subscriber, error: fetchError } = await auth.supabase
       .from('subscribers')
-      .select('id, status')
+      .select('id, status, user_id')
       .eq('id', subscriberId)
       .single()
 
@@ -40,6 +30,13 @@ export async function DELETE(
       )
     }
 
+    if (subscriber.user_id && subscriber.user_id !== auth.user.id) {
+      return NextResponse.json(
+        { error: 'Forbidden: You can only unsubscribe your own subscribers' },
+        { status: 403 }
+      )
+    }
+
     if (subscriber.status === 'unsubscribed') {
       return NextResponse.json(
         { message: 'Already unsubscribed' },
@@ -47,7 +44,7 @@ export async function DELETE(
       )
     }
 
-    const { error: updateError } = await supabase
+    const { error: updateError } = await auth.supabase
       .from('subscribers')
       .update({ 
         status: 'unsubscribed',

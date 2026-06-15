@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import type { PricingPlan } from '@/lib/supabase/database.types'
+import { authenticateRequest } from '@/lib/supabase/auth'
 
 const PLANS: PricingPlan[] = [
   {
@@ -156,8 +157,11 @@ const selectPlanSchema = z.object({
   billing_cycle: z.enum(['monthly', 'annual']),
 })
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const auth = await authenticateRequest(request)
+    if ('error' in auth) return auth.error
+
     const body = await request.json()
     const validated = selectPlanSchema.parse(body)
     const plan = PLANS.find(p => p.tier === validated.plan_tier)
@@ -169,7 +173,7 @@ export async function POST(request: Request) {
       )
     }
 
-    console.log('Plan selected:', validated.plan_tier, 'billing:', validated.billing_cycle)
+    console.log('Plan selected by user', auth.user.id, ':', validated.plan_tier, 'billing:', validated.billing_cycle)
 
     return NextResponse.json({
       success: true,
