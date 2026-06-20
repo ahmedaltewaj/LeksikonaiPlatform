@@ -58,7 +58,7 @@ export type Response = {
 export type AnalyticsEvent = {
   id: string
   user_id: string
-  event_type: 'inquiry_received' | 'response_generated' | 'response_approved' | 'response_edited' | 'response_sent'
+  event_type: 'inquiry_received' | 'response_generated' | 'response_approved' | 'response_edited' | 'response_sent' | 'response_rejected'
   inquiry_id: string | null
   metadata: Record<string, unknown>
   created_at: string
@@ -67,7 +67,7 @@ export type AnalyticsEvent = {
 export type InquiryStatus = 'pending' | 'reviewed' | 'sent' | 'archived'
 export type ResponseStatus = 'draft' | 'approved' | 'edited' | 'sent' | 'rejected'
 export type InquirySource = 'email' | 'web_form' | 'webhook'
-export type EventType = 'inquiry_received' | 'response_generated' | 'response_approved' | 'response_edited' | 'response_sent' | 'feedback_submitted' | 'feedback_reviewed'
+export type EventType = 'inquiry_received' | 'response_generated' | 'response_approved' | 'response_edited' | 'response_sent' | 'response_rejected' | 'feedback_submitted' | 'feedback_reviewed'
 
 export type FeedbackCategory = 'bug' | 'feature' | 'ux' | 'pricing'
 export type FeedbackStatus = 'new' | 'reviewed' | 'addressed' | 'dismissed'
