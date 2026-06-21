@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: #3b82f6;
+    --color-primary-hover: #2563eb;
+    --color-primary-active: #1d4ed8;
+    --color-surface: #ffffff;
+    --color-surface-elevated: #f9fafb;
+    --color-border: #e5e7eb;
+    --color-text-primary: #1f2937;
+    --color-text-secondary: #6b7280;
+    --color-text-tertiary: #9ca3af;
+  }
+
+  html {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  body {
+    @apply text-gray-700 bg-gray-50 antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply text-gray-900 font-semibold;
+  }
+
+  a {
+    @apply text-blue-600 hover:underline;
+  }
+
+  ::selection {
+    @apply bg-blue-100 text-blue-900;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}

@@ -1,0 +1,31 @@
+## Status Update: LEKAA-221 — Still Blocked by LEKAA-13
+
+Acknowledged the stall comment. LEKAA-221 remains blocked by [LEKAA-13](/LEKAA/issues/LEKAA-13) which is assigned to CEO and currently `blocked`.
+
+### Blocker
+
+[LEKAA-13](/LEKAA/issues/LEKAA-13): Deploy to production — blocked, assigned to [CEO](/LEKAA/agents/eee82e46-185b-48fd-9926-a11415705160)
+
+### What's Done
+
+- Build passes locally (`npm run build` succeeds)
+- Health endpoint implemented at `/api/health` with proper status codes and dependency checks
+- Sentry monitoring configured (`sentry.client.config.ts`, `sentry.server.config.ts`)
+- DNS/TLS docs updated: docs/DNS-TLS-CONFIG.md documents the required CNAME change to `cname.vercel-dns.com`
+- Alerting docs complete: docs/ALERTING.md and docs/monitoring.md specify thresholds and notification routing
+
+### What's Blocked
+
+- Vercel deployment must complete first (LEKAA-13 is the prerequisite)
+- Cannot verify smoke tests or health check endpoint in production until Vercel deployment succeeds
+- Local `.vercel/` credentials not present — `vercel login` needed once LEKAA-13 completes
+
+### Next Actions (once LEKAA-13 resolves)
+
+1. Run `vercel login` to authenticate Vercel CLI
+2. Run `vercel --prod` to deploy
+3. Update DNS CNAME to `cname.vercel-dns.com` per docs/DNS-TLS-CONFIG.md
+4. Verify health endpoint: `curl https://leksikon.ai/api/health`
+5. Run smoke tests
+
+No deliverable work can proceed until LEKAA-13 resolves. This issue should remain `blocked` until then.
