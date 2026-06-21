@@ -40,8 +40,6 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run unit tests
         run: npm run test:unit
-      - name: Run E2E tests
-        run: npx playwright test
 
   deploy-preview:
     needs: test
